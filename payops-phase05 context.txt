@@ -1,0 +1,429 @@
+# PayOps — Complete Project Context and Implementation Instructions
+
+I am developing **PayOps**, a fake card payment processing and reconciliation system inspired by how enterprise payment companies such as In-Solutions Global (ISG) operate. I am moving development from Antigravity to Claude Code.
+
+I have an existing codebase. Your job is to **inspect, understand, stabilize, and complete the existing project**, not rebuild it from scratch.
+
+The objective is a functional, demo-ready MVP that demonstrates payment processing, a simulated bank, transaction persistence, a double-entry ledger, settlement reconciliation, authentication, and reliable payment handling.
+
+Follow every instruction below. Prioritize the existing MVP requirements over additional features.
+
+---
+
+## 1. Product Overview
+
+PayOps simulates the core workflow of a payment processing system.
+
+A merchant enters a fictional card number and payment amount. The Payment Switch validates the request and forwards it to a separate Fake Bank service. The bank simulates an approval or decline based on the card's simulated balance.
+
+Approved transactions are stored in PostgreSQL and recorded in a double-entry ledger. Settlement reconciliation compares payment records against a bank-provided CSV file and identifies matching, mismatched, and missing transactions.
+
+If the bank does not respond within the configured timeout, the payment is marked `PENDING`. A background worker subsequently checks the bank's transaction status and finalizes the payment.
+
+Idempotency prevents duplicate processing when the same request is retried.
+
+**This is an educational payment simulator. It must not process real card payments or connect to real banking networks.**
+
+### Expected payment flow
+
+1. Merchant submits a fictional card number and amount.
+2. Payment Switch validates the request, including the Luhn checksum.
+3. The switch forwards the request to the Fake Bank service.
+4. The bank checks the simulated card balance and returns an approval or decline, or delays its response.
+5. The switch records the payment status and relevant references.
+6. Approved payments generate balanced debit and credit ledger entries exactly once.
+7. Timed-out requests become `PENDING` and are resolved by background processing.
+8. Authorized users can view payment records according to their roles.
+9. An administrator uploads a settlement CSV, reviews reconciliation results, and exports the results.
+
+---
+
+## 2. Strict MVP Scope
+
+Implement and verify only the following core functionality.
+
+### A. Payment interface
+
+- Provide a simple payment screen for entering a fictional card number and amount.
+- Display `APPROVED`, `DECLINED`, or `PENDING`.
+- Show an appropriate transaction reference and understandable error messages.
+- Keep the interface minimal and usable.
+- Do not build a complex dashboard or add unnecessary visual features.
+
+### B. Payment Switch
+
+- Validate incoming requests.
+- Validate card numbers using the Luhn algorithm.
+- Validate payment amounts and required fields.
+- Forward payment requests to the Fake Bank service.
+- Handle approvals, declines, timeouts, and failures.
+- Persist transaction information.
+- Use idempotency keys to prevent duplicate charges or duplicate processing.
+- Maintain consistent transaction status and references.
+
+### C. Fake Bank service
+
+- Keep the Fake Bank as a separate service.
+- Maintain fictional cards and simulated balances in the database.
+- Approve or decline transactions according to the configured simulated balance and rules.
+- Prevent duplicate debits when a request is retried.
+- Provide a way to query the status of a bank transaction.
+- Simulate a delayed response for a card ending in `9`, with approximately a 30-second delay.
+- Ensure delayed requests can eventually be resolved without creating a second debit.
+
+Use these fictional test cards where appropriate:
+
+- `4111111111111111` — simulated balance: ₹50,000.
+- `4000000000000002` — simulated balance: ₹5.
+- `4000000000000259` — simulated balance: ₹10,000; use it to exercise the delayed-response flow.
+
+These are test values only. Never treat them as real payment credentials.
+
+### D. Payment statuses and timeout recovery
+
+- Support `APPROVED`, `DECLINED`, and `PENDING`.
+- The switch should wait approximately five seconds for a synchronous bank response.
+- If the bank does not respond in time, return or record `PENDING` without treating the transaction as declined.
+- Use a background worker to query the bank and finalize the transaction when its result becomes available.
+- Ensure recovery is safe to retry and does not duplicate a debit or ledger posting.
+- Do not block a request for the entire simulated 30-second delay.
+
+### E. Double-entry ledger
+
+- Record approved payments using debit and credit postings.
+- Ensure the total debits equal the total credits for each applicable transaction.
+- Create ledger entries exactly once, even if payment processing or recovery is retried.
+- Do not create approved-payment ledger entries for declined transactions.
+- Preserve the ledger's integrity through database transactions and appropriate uniqueness constraints.
+
+### F. Settlement reconciliation
+
+- Allow an authorized administrator to upload a bank settlement CSV.
+- Parse CSV data safely, including quoted fields and escaped quotes.
+- Match bank records against application payment records using appropriate references and available transaction fields.
+- Identify matched records, mismatches, duplicates, and transactions missing from the bank file.
+- Support the existing reconciliation result types, including `MISSING_IN_BANK`.
+- Export reconciliation results as CSV with correct escaping.
+- Provide understandable validation and error messages for invalid files.
+- Do not add an elaborate reporting or analytics dashboard.
+
+### G. Authentication and authorization
+
+- Use Spring Security and JWT.
+- Support `ADMIN` and `MERCHANT` roles.
+- An administrator can view all authorized payment records and perform reconciliation administration.
+- A merchant can access only their own payment records.
+- Validate JWT signatures and authorization claims correctly.
+- Do not rely on frontend restrictions for access control.
+- Do not introduce hardcoded production secrets or insecure fallback secrets.
+
+### H. Database and persistence
+
+- Use PostgreSQL through the existing Supabase project.
+- Persist payments, payment events where applicable, merchant and user records, ledger entries, reconciliation results, and Fake Bank data.
+- Use database constraints and transactions to protect data integrity.
+- Preserve payment idempotency and prevent duplicate bank debits and ledger entries.
+- Use explicit, version-controlled SQL migrations rather than relying on automatic schema creation in production.
+
+---
+
+## 3. Technology Stack and Learning Requirements
+
+Use these technologies and concepts wherever practical within the existing MVP. Prefer integrating them into the current codebase over replacing working implementations.
+
+1. **Programming language:** Java.
+2. **Backend framework:** Spring Boot.
+3. **JDK:** Java 21 is already configured. Keep Java 21 unless a genuine compatibility issue requires a change. Do not downgrade to Java 17 merely to match a learning checklist.
+4. **Spring dependencies:**
+   - Spring Web for REST APIs.
+   - Spring Boot Validation for request validation.
+   - Spring Boot DevTools for local development, if useful.
+   - Retain the existing Spring Security, JWT, database persistence libraries, PostgreSQL driver, and other necessary dependencies.
+5. **Frontend:** Angular, if already present in the project or required by the existing architecture. Inspect before introducing or replacing frontend code.
+6. **API testing:** Postman-compatible endpoints and a usable Postman collection for payment processing, authentication, payment history, and reconciliation.
+7. **API documentation:** Swagger/OpenAPI, using a library compatible with the existing Spring Boot version, such as springdoc-openapi.
+8. **Logging:** Use SLF4J with Logback or the logging framework already provided by Spring Boot. Include useful logs for payment requests, approvals, declines, pending transactions, reconciliation, validation failures, and exceptions. Never log passwords, JWTs, full card numbers, or other sensitive values.
+9. **Build and packaging:** Retain Maven and the existing Maven Wrapper. Ensure the services can be packaged as executable JAR files. Do not introduce WAR packaging unless genuinely required.
+10. **Backend concepts to demonstrate:**
+    - REST API design and CRUD operations where appropriate.
+    - HTTP methods and status codes.
+    - Spring annotations and dependency injection.
+    - Request and response handling using DTOs.
+    - Request validation and centralized exception handling.
+    - Maven dependency management and project structure.
+    - API documentation and testing.
+    - Database persistence and transaction management.
+    - Authentication and role-based authorization.
+    - Idempotency, timeout handling, and background processing.
+
+Use CRUD operations for relevant resources without introducing unnecessary modules or unsafe administrative operations.
+
+Swagger and Postman should make the existing APIs easy to test and demonstrate. DevTools is optional and should be used only where it helps local development.
+
+**Do not expand the MVP just to demonstrate a technology.** The payment simulator must remain the priority.
+
+---
+
+## 4. Existing Implementation and Progress
+
+The project has already undergone several development stages. Treat the following as reported prior progress, not as independently verified facts. Inspect the code and run the tests to establish the actual state.
+
+Previously implemented or addressed:
+
+- Java 21 configuration and Maven Wrapper.
+- Main Payment Switch and separate Fake Bank service.
+- Luhn validation and fictional card balances.
+- Approval, decline, and pending payment flows.
+- Idempotency and duplicate-debit protection.
+- Timeout and pending-payment recovery worker.
+- Balanced ledger entries for approved payments.
+- CSV parsing, reconciliation, and export.
+- Payment-reference and bank-reference matching.
+- Handling conflicting references and duplicate bank rows.
+- JWT authentication and `ADMIN`/`MERCHANT` role-based access.
+- Merchant-scoped payment access.
+- JWT secret hardening.
+- Automated tests for payments, recovery, reconciliation, authentication/RBAC, and JWT secret validation.
+
+Previously reported test results:
+
+- Main application: 154 tests passed, zero failures.
+- Fake Bank application: 16 tests passed, zero failures.
+
+These results were reported by the previous development environment. **Run the current test suites yourself and report the actual results.** Do not assume the previous results still apply.
+
+### JWT security requirements
+
+The production application must require `PAYOPS_JWT_SECRET` and reject missing, blank, or weak secrets.
+
+- Do not reintroduce hardcoded production JWT secrets.
+- Do not introduce fallback hashing or other workarounds that weaken the secret.
+- Keep test-only secrets in test configuration.
+- Never commit real credentials or `.env` secrets.
+
+---
+
+## 5. Supabase Configuration and Database Safety
+
+A new Supabase project has been created for PayOps.
+
+- Project name: PayOps.
+- Project reference: `hwreiftcsaprkuuwradh`.
+- Project URL: `https://hwreiftcsaprkuuwradh.supabase.co`.
+- Database: `postgres`.
+- PostgreSQL version: 17.11.
+- Region: Mumbai, India (`ap-south-1`).
+- The `public` schema was previously checked and had no application tables.
+- `pgcrypto` and `uuid-ossp` were installed at the time of that check.
+
+The database state may have changed since the last inspection. Verify it safely if the available tools and credentials permit.
+
+### Database connection requirements
+
+- Use environment variables for database configuration.
+- Inspect the configuration of both the main application and Fake Bank service.
+- Retain support for appropriate environment variables, including `PAYOPS_DB_URL` and `FAKEBANK_DB_URL`, where compatible with the current code.
+- Avoid committing database credentials.
+- Keep local development configuration separate from production configuration.
+- Do not assume Supabase Auth, Edge Functions, or Realtime are required. The current application uses Spring Security and JWT, and PostgreSQL persistence is the immediate requirement.
+- Do not assume the live database connection works merely because a URL exists in configuration.
+
+The Supabase direct database connection may require IPv6 connectivity. If the environment supports only IPv4, evaluate the appropriate Supabase session pooler configuration rather than assuming the direct connection will work.
+
+### Critical SQL safety rules
+
+The repository contains `sql/schema.sql` and `sql/migrate-phase1.sql`.
+
+Previously identified concerns include:
+
+- `schema.sql` contains destructive `DROP TABLE` or `DROP VIEW ... CASCADE` statements.
+- The schema has a foreign-key creation-order issue involving `app_user` and `merchant`.
+- The schema may not match current application entities and enums.
+- Some status and source constraints may be outdated.
+- Fake Bank tables such as `bank_card` and `bank_transaction` may be missing.
+- The upgrade migration assumes existing tables and is not necessarily suitable for a fresh database.
+- The upgrade migration may contain redundant alteration blocks.
+- Current code may have additional entities, fields, constraints, and enum values not reflected in the SQL files.
+
+These observations must be verified against the current repository.
+
+**Do not execute `schema.sql`, `migrate-phase1.sql`, or any other database-changing SQL against Supabase without my explicit approval.**
+
+Do not drop, truncate, reset, or overwrite existing database objects.
+
+---
+
+## 6. Required Work Plan
+
+Work in stages. Do not skip inspection and immediately start editing files.
+
+### Stage 1 — Inspect the existing project
+
+1. Inspect the repository structure, Git status, recent changes, and existing configuration.
+2. Identify the main Spring Boot service, Fake Bank service, frontend, tests, SQL files, and environment-variable requirements.
+3. Review the Maven configuration and Java version.
+4. Identify implemented, incomplete, broken, and missing MVP features.
+5. Run the existing test suites using the Maven Wrapper.
+6. Report actual test results, including failures and build errors.
+7. Identify whether Angular, Swagger/OpenAPI, and Postman resources already exist.
+
+Do not overwrite uncommitted work. Do not replace the project with a new scaffold.
+
+### Stage 2 — Audit the database schema
+
+1. Compare all current Java entities, enums, repositories, services, and queries with `schema.sql` and `migrate-phase1.sql`.
+2. Identify every missing table, column, foreign key, index, uniqueness constraint, enum value, and check constraint needed by the existing MVP.
+3. Verify payment idempotency, bank transaction uniqueness, ledger balancing, reconciliation results, and role-related relationships.
+4. Identify which SQL files are for upgrades and which are safe for fresh installation.
+5. Produce a clear database compatibility report.
+
+Do not execute any database-changing SQL.
+
+### Stage 3 — Prepare a safe fresh-install script
+
+If the current SQL files are insufficient for a new, empty Supabase database:
+
+1. Create a separate, version-controlled fresh-install SQL script.
+2. Build it from the actual current codebase, not from assumptions.
+3. Include all required tables, columns, relationships, indexes, constraints, and fictional Fake Bank seed data.
+4. Ensure creation order is correct.
+5. Avoid destructive statements and preserve existing database objects.
+6. Clearly document assumptions and execution instructions.
+7. Keep the existing upgrade migration separate from the fresh-install script.
+
+Review the script for correctness before presenting it. **Do not execute it against Supabase until I explicitly approve.**
+
+### Stage 4 — Stabilize the application
+
+After inspection and reporting:
+
+1. Fix verified defects that block the existing MVP.
+2. Preserve the current architecture and working features.
+3. Ensure both services use the intended PostgreSQL configuration.
+4. Add missing validation, HTTP status handling, centralized exception handling, and safe logging where needed.
+5. Add Swagger/OpenAPI and a useful Postman collection if missing.
+6. Add DevTools only if useful.
+7. Keep the Maven Wrapper and executable JAR packaging.
+8. Add or update tests for any changes.
+9. Re-run the relevant test suites and report actual results.
+
+Do not change payment business logic merely to make the code look cleaner. Preserve idempotency, timeout recovery, authorization, and ledger guarantees.
+
+### Stage 5 — Validate database integration
+
+Only after I explicitly approve the database setup:
+
+1. Execute the reviewed fresh-install SQL against the intended empty database, or follow the approved migration plan.
+2. Configure both services with the approved environment variables.
+3. Verify the database connection and application startup.
+4. Validate persistence across application restarts.
+5. Test the payment, Fake Bank, ledger, and reconciliation flows against PostgreSQL.
+6. Verify duplicate-request handling, pending recovery, and database constraints.
+7. Confirm merchant access restrictions and administrator permissions.
+
+If credentials or network access are unavailable, do not invent successful results. Provide the exact steps I need to perform.
+
+### Stage 6 — Verify the end-to-end MVP
+
+Use Postman, automated tests, and the frontend where available to verify:
+
+- Valid card with sufficient balance → `APPROVED`.
+- Valid card with insufficient balance → `DECLINED`.
+- Invalid card number or amount → validation error.
+- Delayed bank response → `PENDING`, followed by eventual finalization.
+- Retried request with the same idempotency key → no duplicate charge.
+- Approved payment → balanced debit and credit ledger entries exactly once.
+- Repeated recovery attempt → no duplicate debit or ledger entry.
+- Merchant → can view only their own authorized payment records.
+- Administrator → can view authorized payment records and manage reconciliation.
+- Valid settlement CSV → correct matching results.
+- Missing, mismatched, and duplicate settlement rows → correct reconciliation results.
+- CSV export → valid escaped CSV.
+- Restarting services → persisted records remain available.
+
+Report any scenario that could not be verified.
+
+### Stage 7 — Frontend integration
+
+Once the backend and database are stable, inspect the existing Angular frontend and connect it to the actual APIs.
+
+- Keep the payment interface simple.
+- Show clear transaction status and reference information.
+- Add only the minimum payment history and reconciliation screens required by the current MVP.
+- Respect backend authentication and authorization.
+- Handle API errors and pending states correctly.
+- Do not build unnecessary dashboards, complex animations, or unrelated screens.
+
+---
+
+## 7. Explicitly Out of Scope
+
+Do not implement these features unless I request them later:
+
+- Real card payments or real banking-network integrations.
+- Kafka or other unnecessary messaging infrastructure.
+- Kubernetes.
+- Fraud detection or AI/ML.
+- Dispute management or chargebacks.
+- Advanced analytics and reporting dashboards.
+- Notifications and email integrations.
+- Unnecessary microservices or architectural rewrites.
+- Extra roles or elaborate permission systems beyond the existing MVP.
+- Features that are not needed to complete and demonstrate the required payment workflow.
+
+These may be documented as potential Phase 2 enhancements, but they must not delay or complicate the MVP.
+
+---
+
+## 8. Working Rules
+
+1. Inspect before editing.
+2. Preserve existing working code and uncommitted changes.
+3. Follow the current repository's conventions unless they cause a verified problem.
+4. Make small, focused changes.
+5. Do not claim a test, database query, API call, or deployment succeeded unless you actually verified it.
+6. Never expose secrets or place them in source control.
+7. Do not run destructive commands or database-changing SQL without my explicit approval.
+8. Do not replace Java 21 with Java 17 without a genuine technical reason.
+9. Avoid unnecessary dependencies and architecture changes.
+10. Keep the code understandable and suitable for a college project demonstration.
+11. Explain significant changes and provide the exact commands needed to build, test, and run the services.
+12. When a blocker requires my input, explain the blocker and ask only for the information needed to proceed.
+13. Keep a concise checklist of completed, pending, and blocked MVP requirements.
+14. Prefer finishing and validating the existing implementation over introducing new features.
+
+---
+
+## 9. Final Definition of Done
+
+PayOps is ready when:
+
+- The existing codebase builds successfully.
+- Both backend services run with the intended configuration.
+- PostgreSQL persistence works.
+- The core payment workflow works end to end.
+- The Fake Bank supports approvals, declines, and simulated delays.
+- Pending payments are eventually resolved safely.
+- Idempotency prevents duplicate charges.
+- Approved transactions produce balanced ledger entries exactly once.
+- Authentication and role-based authorization work.
+- CSV settlement reconciliation and export work.
+- REST APIs are documented and testable through Swagger/OpenAPI and Postman.
+- The relevant automated tests pass.
+- No destructive database action has been performed without approval.
+- The implementation remains within the strict MVP scope.
+
+## Start Here
+
+**Begin with Stage 1.**
+
+Inspect the existing project and report:
+
+1. What is already implemented and working.
+2. What is incomplete or broken.
+3. The actual test results.
+4. Which requested technologies and learning concepts are already present or missing.
+5. The exact differences between the current application code and SQL schemas.
+6. The safest next steps to complete the MVP.
+
+Do not modify the Supabase database yet. Do not begin with a full rewrite. First establish the actual state of the project, then proceed incrementally.

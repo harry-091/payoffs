@@ -1,0 +1,60 @@
+services:
+  # Main Spring Boot API. Public traffic reaches the Angular app through Nginx.
+  - type: web
+    name: payops-api
+    runtime: docker
+    plan: starter
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /v3/api-docs
+    autoDeploy: true
+    envVars:
+      - key: PAYOPS_DB_URL
+        sync: false
+      - key: PAYOPS_DB_USERNAME
+        sync: false
+      - key: PAYOPS_DB_PASSWORD
+        sync: false
+      - key: PAYOPS_JWT_SECRET
+        generateValue: true
+      - key: FAKEBANK_URL
+        value: http://fake-bank:8081
+      - key: PAYOPS_RECOVERY_ENABLED
+        value: "true"
+
+  # Not publicly exposed. Only the API calls this simulated bank.
+  - type: pserv
+    name: fake-bank
+    runtime: docker
+    plan: starter
+    region: singapore
+    dockerfilePath: ./Dockerfile.fakebank
+    dockerContext: .
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "8081"
+      - key: PAYOPS_DB_URL
+        sync: false
+      - key: PAYOPS_DB_USERNAME
+        sync: false
+      - key: PAYOPS_DB_PASSWORD
+        sync: false
+
+  # Angular static build served by Nginx; /api is reverse-proxied privately.
+  - type: web
+    name: payops-frontend
+    runtime: docker
+    plan: starter
+    region: singapore
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: PAYOPS_API_HOSTPORT
+        fromService:
+          name: payops-api
+          type: web
+          property: hostport
